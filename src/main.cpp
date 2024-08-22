@@ -15,13 +15,33 @@
 
 #define SensorPin1 A0 // pH meter Analog output to Arduino Analog Input 0
 #define SensorPin2 A1 // pH meter Analog output to Arduino Analog Input 1
+#define SensorPin3 A5 // pH meter Analog output to Arduino Analog Input 5
 
-float calibration_value1 = 21.34 + 5.8; // Calibration value for Sensor 1
-float calibration_value2 = 21.34 + 7.5; // Calibration value for Sensor 1
+float calibration_value1 = 21.34 + 2.5; // Calibration value for Sensor 1
+float calibration_value2 = 21.34 + 3.1; // Calibration value for Sensor 2
+float calibration_value3 = 21.34 + 3.8; // Calibration value for Sensor 3
+
+#define analogInPinTDS A3 // Analog input pin untuk tds
+
+// variable
+int sensorValue0; // adc value
+float calibration_value0 = 1203.08;
 
 SoftwareSerial mySerial(2, 3); // RX, TX , Software serial from ESP-01 to Arduino
 
-int i = 0;
+int detikGerbang = 0;
+
+bool bukaGerbang = false;
+bool tutupGerbang = false;
+
+String statusGerbang = "idle";
+
+float tdsReading(int sensorPin, float calibration_value)
+{
+  int sensorValue = analogRead(sensorPin);
+  float outputTds = (0.3417 * sensorValue) + calibration_value;
+  return outputTds;
+}
 
 float processPHsensor(int pin, float calibration_value)
 {
@@ -82,9 +102,14 @@ void setup()
   Serial.begin(115200);
   mySerial.begin(115200);
 
+  // built in led
+  pinMode(LED_BUILTIN, OUTPUT);
+  digitalWrite(LED_BUILTIN, LOW);
+
   // initialize ph sensor
   pinMode(SensorPin1, INPUT);
   pinMode(SensorPin2, INPUT);
+  pinMode(SensorPin3, INPUT);
 
   // Initialize sensor 1
   pinMode(TRIG_PIN_1, OUTPUT);
@@ -107,23 +132,82 @@ void setup()
 
 void loop()
 {
-  // String IncomingStr = "";
-  // bool flag = false;
+  String IncomingStr = "";
+  bool flag = false;
 
-  // // Check if data is available from ESP-01
-  // while (mySerial.available()) {
-  //   IncomingStr = mySerial.readString();
-  //   flag = true;
-  // }
+  // Check if data is available from ESP-01
+  while (mySerial.available())
+  {
+    IncomingStr = mySerial.readString();
+    flag = true;
+  }
 
-  // if (flag) {
-  //   String response = IncomingStr + ", Back from Arduino " + i + " times";
-  //   Serial.println(response); // Print to Serial monitor for debugging
-  //   mySerial.print("aran"); // Send response back to ESP-01
-  //   mySerial.print(i);
-  //   mySerial.print ("\n");
-  //   i++;
-  // }
+  Serial.println("Ini flag : " + String(flag));
+
+  if (flag)
+  {
+    String response = IncomingStr;
+    // Serial.println(response); // Print to Serial monitor for debugging
+    // mySerial.print("aran"); // Send response back to ESP-01
+    // mySerial.print(i);
+    // mySerial.print ("\n");
+    int commaIndex1 = response.indexOf(',');
+    String wifi = response.substring(0, commaIndex1);
+    String gerbang = response.substring(commaIndex1 + 1);
+    Serial.println(wifi);
+    Serial.println(gerbang);
+
+    if (wifi == "Wifi connected")
+    {
+      Serial.println("Wifi Connected");
+      digitalWrite(LED_BUILTIN, HIGH);
+    }
+    else
+    {
+      Serial.println("Wifi Not Connected");
+      digitalWrite(LED_BUILTIN, LOW);
+    }
+
+     // Assuming `gerbang` is the received command
+    if (gerbang == "buka" && statusGerbang != "buka") {
+        bukaGerbang = true;
+    } else if (gerbang == "tutup" && statusGerbang != "tutup") {
+        tutupGerbang = true;
+    }
+
+    // Handle the "buka" command
+    if (bukaGerbang == true) {
+        if (detikGerbang < 2) { // Open for 5 seconds
+            detikGerbang++;
+            digitalWrite(RELAY_PIN_1, HIGH); // Open the gate
+            digitalWrite(RELAY_PIN_2, LOW);  // Ensure the other relay is off
+        } else { // After 5 seconds
+            bukaGerbang = false;
+            statusGerbang = "buka"; // Update the status
+            detikGerbang = 0;
+            digitalWrite(RELAY_PIN_1, LOW); // Close the gate
+            digitalWrite(RELAY_PIN_2, LOW); // Ensure both relays are off
+        }
+    }
+
+    // Handle the "tutup" command
+    if (tutupGerbang == true) {
+        if (detikGerbang < 2) { // Close for 5 seconds
+            detikGerbang++;
+            digitalWrite(RELAY_PIN_1, LOW); // Ensure the other relay is off
+            digitalWrite(RELAY_PIN_2, HIGH); // Close the gate
+        } else { // After 5 seconds
+            tutupGerbang = false;
+            statusGerbang = "tutup"; // Update the status
+            detikGerbang = 0;
+            digitalWrite(RELAY_PIN_1, LOW); // Ensure both relays are off
+            digitalWrite(RELAY_PIN_2, LOW); // Ensure both relays are off
+        }
+    }
+
+    // Optionally, print the status
+    Serial.println("Gate Status: " + statusGerbang);
+  }
 
   // Measure distance for sensor 1
   long duration1 = measureDistance(TRIG_PIN_1, ECHO_PIN_1);
@@ -135,7 +219,11 @@ void loop()
 
   float phValue1 = processPHsensor(SensorPin1, calibration_value1);
   float phValue2 = processPHsensor(SensorPin2, calibration_value2);
+  float phValue3 = processPHsensor(SensorPin3, calibration_value3);
   // float phValue2 = processPHsensor(SensorPin2, calibration_value2);
+
+  //
+  float tdsValue1 = tdsReading(analogInPinTDS, calibration_value0);
 
   // Print the pH values to the serial monitor
 
@@ -151,22 +239,30 @@ void loop()
   Serial.print("pH Value 2: ");
   Serial.println(phValue2);
 
-  if (distance1 <= 30)
-  {
-    digitalWrite(RELAY_PIN_1, HIGH);
-    digitalWrite(RELAY_PIN_2, LOW);
-  }
-  else if (distance1 >= 60)
-  {
-    digitalWrite(RELAY_PIN_2, HIGH);
-    digitalWrite(RELAY_PIN_1, LOW);
-  }
-  else
-  {
-    digitalWrite(RELAY_PIN_1, LOW);
-    digitalWrite(RELAY_PIN_2, LOW);
-  }
+  Serial.print("pH Value 3: ");
+  Serial.println(phValue3);
 
+  Serial.print("TDS Value 1: ");
+  Serial.println(tdsValue1);
+
+  // if (distance1 <= 30)
+  // {
+  //   digitalWrite(RELAY_PIN_1, HIGH);
+  //   digitalWrite(RELAY_PIN_2, LOW);
+  // }
+  // else if (distance1 >= 60)
+  // {
+  //   digitalWrite(RELAY_PIN_2, HIGH);
+  //   digitalWrite(RELAY_PIN_1, LOW);
+  // }
+  // else
+  // {
+  //   digitalWrite(RELAY_PIN_1, LOW);
+  //   digitalWrite(RELAY_PIN_2, LOW);
+  // }
+
+  mySerial.print(statusGerbang);
+  mySerial.print(",");
   mySerial.print(distance1);
   mySerial.print(",");
   mySerial.print(distance2);
@@ -174,6 +270,10 @@ void loop()
   mySerial.print(phValue1);
   mySerial.print(",");
   mySerial.print(phValue2);
+  mySerial.print(",");
+  mySerial.print(phValue3);
+  mySerial.print(",");
+  mySerial.print(tdsValue1);
   mySerial.print("\n");
 
   delay(2000);
